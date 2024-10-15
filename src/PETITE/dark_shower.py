@@ -14,6 +14,7 @@ from PETITE.kinematics import (
     radiative_return_fourvecs,
 )
 from PETITE.shower import Shower
+from PETITE import targets
 import PETITE.all_processes as proc
 from copy import deepcopy
 from numpy.random import random as draw_U
@@ -110,15 +111,13 @@ class DarkShower(Shower):
             self.active_processes = dark_process_codes
 
         self.set_dark_dict_dir(dict_dir)
-        self.set_target_material(target_material)
+        self.target = targets.Target(target_material)
         self.min_energy = min_energy
         self.kinetic_mixing = kinetic_mixing
         self.g_e = g_e
         if self.g_e is None:
             self.g_e = self.kinetic_mixing * np.sqrt(4 * np.pi * alpha_em)
 
-        self.set_material_properties()
-        self.set_n_targets()
         self.set_mV_list(dict_dir)
         self.set_mV(mV_in_GeV, mode)
 

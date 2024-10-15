@@ -13,17 +13,18 @@ import os
 # path = os.getcwd()
 # path = os.path.join(path,"../PETITE")
 # sys.path.insert(0,path)
-
-import PETITE.all_processes as proc
-from PETITE.physical_constants import target_information
 import pickle
 import copy
 import numpy as np
+from scipy.interpolate import interp1d
 import argparse
 from datetime import datetime
 import vegas
 
 # from tqdm import tqdm
+
+import PETITE.all_processes as proc
+from PETITE.targets import target_information
 
 # Dictionary of proceses with corresponding x-secs, form factors and Q**2 functions
 # process_info ={    'PairProd' : {'diff_xsection': dsigma_pairprod_dimensionless,   'form_factor': g2_elastic, 'QSq_func': pair_production_q_sq_dimensionless},
@@ -96,12 +97,21 @@ def do_find_max_work(params, process_file):
     for tm in params["process_targets"]:
         xSec[tm] = 0.0
         max_F_TM[tm] = 0.0
-    batch_f = diff_xsec(
-        event_info, len(proc.integration_range(event_info, event_info["process"]))
-    )
     integrand.set(max_nhcube=1, neval=params["neval"])
     for trial_number in range(params["n_trials"]):
-        for x, wgt in integrand.random_batch():  # scan over integrand
+        for x_batch, wgt_batch in integrand.random_batch():  # scan over integrand
+            # for x, wgt in zip(x_batch, wgt_batch):
+            #     for tm in params["process_targets"]:
+            #         event_info_target = copy.deepcopy(event_info)
+            #         event_info_target["Z_T"] = target_information[tm]["Z_T"]
+            #         event_info_target["A_T"] = target_information[tm]["A_T"]
+            #         event_info_target["mT"] = target_information[tm]["mT"]
+            #         if "mV" in params:
+            #             event_info_target["mV"] = params["mV"]
+            #         MM = wgt * batch_f(np.array([x]))
+            #         if MM > max_F_TM[tm]:
+            #             max_F_TM[tm] = MM
+            #         xSec[tm] += np.sum(MM) / params["n_trials"]
 
             for tm in params["process_targets"]:
                 event_info_target = copy.deepcopy(event_info)
@@ -110,10 +120,18 @@ def do_find_max_work(params, process_file):
                 event_info_target["mT"] = target_information[tm]["mT"]
                 if "mV" in params:
                     event_info_target["mV"] = params["mV"]
-                MM = np.max(wgt * batch_f(x))
-                if MM > max_F_TM[tm]:
-                    max_F_TM[tm] = MM
-                xSec[tm] += MM / params["n_trials"]
+                MM = wgt_batch * diff_xsec(
+                    event_info_target,
+                    len(
+                        proc.integration_range(
+                            event_info_target, event_info_target["process"]
+                        )
+                    ),
+                )(x_batch)
+                MMmax = np.max(MM)
+                if MMmax > max_F_TM[tm]:
+                    max_F_TM[tm] = MMmax
+                xSec[tm] += np.sum(MM) / params["n_trials"]
 
     samp_dict_info = {
         "neval": params["neval"],
@@ -159,8 +177,11 @@ def main(params):
     print("List of processes: ", params["process"])
     print("List of target materials: ", params["process_targets"])
 
-    # Initialise dictionaries to store samples and cross sections
+    # Initialise dictionaries
+
+    # Data for final sampling
     final_sampling_dict = {}
+    # Data for final xsec
     final_xsec_dict = {}
 
     # Before starting, check for invalid processes
@@ -191,8 +212,10 @@ def main(params):
             adaptive_maps_file = path + process + "_AdaptiveMaps.npy"
             print(f"Trying again at {adaptive_maps_file}")
             adaptive_maps = np.load(adaptive_maps_file, allow_pickle=True)
+
         final_sampling_dict[process] = []
         final_xsec_dict[process] = {}
+
         # Initialise dictionary to store cross sections for each target material
         for tm in params["process_targets"]:
             final_xsec_dict[process][tm] = []
@@ -211,6 +234,7 @@ def main(params):
             )
             # Append sampling dictionary to final sampling dictionary
             final_sampling_dict[process].append(sampling)
+
             # Append incoming energy and cross section dictionary to final cross section dictionary for each target material
             for tm in params["process_targets"]:
                 final_xsec_dict[process][tm].append(
@@ -223,6 +247,7 @@ def main(params):
         pickle.dump(final_sampling_dict, f)
     with open(params["save_location"] + "/sm_xsec.pkl", "wb") as f:
         pickle.dump(final_xsec_dict, f)
+
     print("Saved cross sections to " + params["save_location"] + "/sm_xsecs.pkl")
     print("Saved samples to " + params["save_location"] + "/sm_maps.pkl")
     return

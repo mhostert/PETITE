@@ -16,24 +16,22 @@ from PETITE.kinematics import (
 )
 import PETITE.all_processes as proc
 from PETITE.physical_constants import (
-    target_information,
-    TeV,
-    m_proton_grams,
+    GeV,
     GeVsqcm2,
     cmtom,
     m_electron,
     alpha_em,
 )
+from PETITE import targets
 
 # from datetime import datetime
-
 # np.random.seed(int(datetime.now().timestamp()))
 
 from numpy.random import random as draw_U
 import copy
 
 # Maximum energy allowed for Bhabha and Moller scattering
-_Ee_MAX = 10e3 * TeV  # 10 TeV
+_Ee_MAX = 100 * GeV
 
 
 process_code = {"Brem": 0, "Ann": 1, "PairProd": 2, "Comp": 3, "Moller": 4, "Bhabha": 5}
@@ -104,28 +102,43 @@ class Shower:
         fast_MCS_mode=True,
         seed=None,
         rescale_MCS=1,
+        load_xsec_interp=True,
     ):
-        """Initializes the shower object.
+        """
+        Initializes the shower object.
+
         Args:
             dict_dir: directory containing the pre-computed VEGAS integrators and auxillary info.
+
             target_material: string label of the homogeneous material through which
             particles propagate (available materials are the dict keys of
             Z, A, rho, etc)
+
             min_Energy: minimum particle energy in GeV at which the particle
             finishes its propagation through the target
+
+            load_xsec_interp: whether to load pre-computed cross-sections interpolators.
+                If False, create interpolators from the pre-computed cross-section data in dict_dir.
+                Default is True.
         """
         if seed is not None:
             np.random.seed(seed)
 
         self.set_dict_dir(dict_dir)
-        self.set_target_material(target_material)
         self.min_energy = min_energy
 
-        self.set_material_properties()
-        self.set_n_targets()
-        self.set_cross_sections()
-        self.set_samples()
-        self.set_NSigmas()
+        # Nuclear target
+        self.target = targets.Target(target_material)
+
+        self.load_xsec_interp = load_xsec_interp
+        if load_xsec_interp:
+            self.load_xsec_interpolators()
+            self.set_samples()
+        else:
+            self.set_cross_sections()
+            self.set_samples()
+            self.set_NSigmas()
+
         self.set_MCS_momentum(fast_MCS_mode)
         self.set_MCS_rescale_factor(rescale_MCS)
 
@@ -140,6 +153,87 @@ class Shower:
             self._get_MCS_p = get_scattered_momentum_fast
         else:
             self._get_MCS_p = get_scattered_momentum_Bethe
+
+    def load_xsec_interpolators(self):
+
+        xsec_path = "sm_xsec_interp.pkl"
+        try:
+            xsec_interp_file = open(self._dict_dir + xsec_path, "rb")
+        except FileNotFoundError:
+            raise Exception(
+                f"Xsec interpolators file not found: {self._dict_dir + xsec_path}"
+            )
+        self.xsec_dict = pickle.load(xsec_interp_file)
+        xsec_interp_file.close()
+
+        try:
+            invmfp_interp_file = open(
+                self._dict_dir + xsec_path.replace("xsec", "invmfp"), "rb"
+            )
+        except FileNotFoundError:
+            raise Exception(
+                f"Inv mfp interpolators file not found: {self._dict_dir + xsec_path.replace('xsec','invmfp')}"
+            )
+
+        self.invmfp_dict = pickle.load(invmfp_interp_file)
+        invmfp_interp_file.close()
+
+        # Now do a case by case assingment of the interpolators
+        # NOTE: This is a littel ugly -- maybe call interpolator dicts directly?
+
+        # Interpolations of sigma (cm^2) as a function of incoming particle energy
+        self._NSigmaBrem = self.xsec_dict["Brem"][self.target.name]
+        self._NSigmaPP = self.xsec_dict["PairProd"][self.target.name]
+        self._NSigmaAnn = self.xsec_dict["Ann"][self.target.name]
+        self._NSigmaComp = self.xsec_dict["Comp"][self.target.name]
+        self._NSigmaMoller = self.xsec_dict["Moller"][self.target.name]
+        self._NSigmaBhabha = self.xsec_dict["Bhabha"][self.target.name]
+
+        # Interpolations of (n_T * sigma) (1/cm) as a function of incoming particle energy
+        self._interaction_integral_Brem = self.invmfp_dict["Brem"][self.target.name]
+        self._interaction_integral_PP = self.invmfp_dict["PairProd"][self.target.name]
+        self._interaction_integral_Ann = self.invmfp_dict["Ann"][self.target.name]
+        self._interaction_integral_Comp = self.invmfp_dict["Comp"][self.target.name]
+        self._interaction_integral_Moller = self.invmfp_dict["Moller"][self.target.name]
+        self._interaction_integral_Bhabha = self.invmfp_dict["Bhabha"][self.target.name]
+
+        self._maximum_calculable_energy = {
+            11: np.max(
+                [self.xsec_dict["Brem"]["Emax"], self.xsec_dict["Moller"]["Emax"]]
+            ),
+            -11: np.max(
+                [
+                    self.xsec_dict["Brem"]["Emax"],
+                    self.xsec_dict["Bhabha"]["Emax"],
+                    self.xsec_dict["Ann"]["Emax"],
+                ]
+            ),
+            22: np.max(
+                [
+                    self.xsec_dict["PairProd"]["Emax"],
+                    self.xsec_dict["Comp"]["Emax"],
+                ]
+            ),
+        }
+
+        self._minimum_calculable_energy = {
+            11: np.min(
+                [self.xsec_dict["Brem"]["Emin"], self.xsec_dict["Moller"]["Emin"]]
+            ),
+            -11: np.min(
+                [
+                    self.xsec_dict["Brem"]["Emin"],
+                    self.xsec_dict["Bhabha"]["Emin"],
+                    self.xsec_dict["Ann"]["Emin"],
+                ]
+            ),
+            22: np.min(
+                [
+                    self.xsec_dict["PairProd"]["Emin"],
+                    self.xsec_dict["Comp"]["Emin"],
+                ]
+            ),
+        }
 
     def load_sample(self, dict_dir, process):
         sample_file = open(dict_dir + "sm_maps.pkl", "rb")
@@ -157,6 +251,12 @@ class Shower:
         cross_section_dict = pickle.load(cross_section_file)
         cross_section_file.close()
 
+        # NOTE: I couldnt tell why another target_material argument is passed here, but kept it nonetheless
+        if target_material != self.target.name:
+            print(
+                f"Warning: Passed target material {target_material} does not match initialized {self.target.name}"
+            )
+
         if process not in cross_section_dict:
             raise Exception("Process String does not match library")
 
@@ -173,48 +273,12 @@ class Shower:
         """Get the top level directory containing pre-computed MC pickles"""
         return self._dict_dir
 
-    def set_target_material(self, value):
-        """Set the string representing the target material to value"""
-        self._target_material = value
-
-    def get_target_material(self):
-        """Get the string representing the target material"""
-        return self._target_material
-
-    def set_material_properties(self):
-        """Defines material properties (Z, A, rho, etc) based on the target
-        material label
-        """
-        self._ZTarget = target_information[self.get_target_material()]["Z_T"]
-        self._ATarget = target_information[self.get_target_material()]["A_T"]
-        self._rhoTarget = target_information[self.get_target_material()]["rho"]
-        self._dEdx = target_information[self.get_target_material()]["dEdx"]
-
-    def get_material_properties(self):
-        """Returns target material properties: Z, A, rho, dE/dx"""
-        return self._ZTarget, self._ATarget, self._rhoTarget, self._dEdx
-
-    def set_n_targets(self):
-        """Determines nuclear and electron target densities for the
-        target material
-        """
-        ZT, AT, rhoT, dEdxT = self.get_material_properties()
-        self._nTarget = rhoT / m_proton_grams / AT
-        self._nElecs = self._nTarget * ZT
-
     def set_samples(self):
         self._loaded_samples = {}
         for Process in process_code.keys():
             self._loaded_samples[Process] = self.load_sample(self._dict_dir, Process)
         self._Egamma_min = self._loaded_samples["Brem"][0][1]["Eg_min"]
         self._Ee_min = self._loaded_samples["Brem"][0][1]["Ee_min"]
-
-    def get_n_targets(self):
-        """Returns nuclear and electron target densities for the
-        target material in 1/cm^3
-        """
-
-        return self._nTarget, self._nElecs
 
     def set_cross_sections(self):
         """Loads the pre-computed cross-sections for various shower processes
@@ -223,23 +287,42 @@ class Shower:
 
         # These contain only the cross sections for the chosen target material
         self._brem_cross_section = self.load_cross_section(
-            self._dict_dir, "Brem", self._target_material
+            self._dict_dir, "Brem", self.target.name
         )
         self._pair_production_cross_section = self.load_cross_section(
-            self._dict_dir, "PairProd", self._target_material
+            self._dict_dir, "PairProd", self.target.name
         )
         self._annihilation_cross_section = self.load_cross_section(
-            self._dict_dir, "Ann", self._target_material
+            self._dict_dir, "Ann", self.target.name
         )
         self._compton_cross_section = self.load_cross_section(
-            self._dict_dir, "Comp", self._target_material
+            self._dict_dir, "Comp", self.target.name
         )
         self._moller_cross_section = self.load_cross_section(
-            self._dict_dir, "Moller", self._target_material
+            self._dict_dir, "Moller", self.target.name
         )
         self._bhabha_cross_section = self.load_cross_section(
-            self._dict_dir, "Bhabha", self._target_material
+            self._dict_dir, "Bhabha", self.target.name
         )
+
+        self._maximum_calculable_energy = {
+            11: np.max(
+                [self._brem_cross_section[-1][0], self._moller_cross_section[0][0]]
+            ),
+            -11: np.max(
+                [
+                    self._brem_cross_section[-1][0],
+                    self._bhabha_cross_section[-1][0],
+                    self._annihilation_cross_section[-1][0],
+                ]
+            ),
+            22: np.max(
+                [
+                    self._pair_production_cross_section[-1][0],
+                    self._compton_cross_section[-1][0],
+                ]
+            ),
+        }
 
         self._minimum_calculable_energy = {
             11: np.min(
@@ -285,39 +368,48 @@ class Shower:
         return self._bhabha_cross_section
 
     def set_NSigmas(self):
-        """Constructs interpolations of n_T sigma (in 1/cm) as a functon of
+        """Constructs interpolations of (n_T * sigma) (in 1/cm) as a functon of
         incoming particle energy for each process
         """
-        BS, PPS, AnnS, CS, MS, BhS = (
-            self.get_brem_cross_section(),
-            self.get_pairprod_cross_section(),
-            self.get_annihilation_cross_section(),
-            self.get_compton_cross_section(),
-            self.get_moller_cross_section(),
-            self.get_bhabha_cross_section(),
+
+        # NOTE: Why are MS and BhS not used? Is it because of the precision?
+
+        BS, PPS, AnnS, CS, MS, BhS = np.array(
+            [
+                self.get_brem_cross_section(),
+                self.get_pairprod_cross_section(),
+                self.get_annihilation_cross_section(),
+                self.get_compton_cross_section(),
+                self.get_moller_cross_section(),
+                self.get_bhabha_cross_section(),
+            ]
         )
-        nZ, ne = self.get_n_targets()
+
+        # Number of targets
+        nZ, ne = self.target.get_n_targets()
+
+        # Interpolations of (n_T * sigma) as a function of incoming particle energy
         self._NSigmaBrem = interp1d(
-            np.transpose(BS)[0],
-            nZ * GeVsqcm2 * np.transpose(BS)[1],
+            BS[:, 0],
+            nZ * GeVsqcm2 * BS[:, 1],
             fill_value=0.0,
             bounds_error=False,
         )
         self._NSigmaPP = interp1d(
-            np.transpose(PPS)[0],
-            nZ * GeVsqcm2 * np.transpose(PPS)[1],
+            PPS[:, 0],
+            nZ * GeVsqcm2 * PPS[:, 1],
             fill_value=0.0,
             bounds_error=False,
         )
         self._NSigmaAnn = interp1d(
-            np.transpose(AnnS)[0],
-            ne * GeVsqcm2 * np.transpose(AnnS)[1],
+            AnnS[:, 0],
+            ne * GeVsqcm2 * AnnS[:, 1],
             fill_value=0.0,
             bounds_error=False,
         )
         self._NSigmaComp = interp1d(
-            np.transpose(CS)[0],
-            ne * GeVsqcm2 * np.transpose(CS)[1],
+            CS[:, 0],
+            ne * GeVsqcm2 * CS[:, 1],
             fill_value=0.0,
             bounds_error=False,
         )
@@ -345,6 +437,20 @@ class Shower:
             fill_value=0.0,
             bounds_error=False,
         )
+        """
+        self._NSigmaMoller = interp1d(
+            np.transpose(MS)[0],
+            ne * GeVsqcm2 * np.transpose(MS)[1],
+            fill_value=0.0,
+            bounds_error=False,
+        )
+        self._NSigmaBhabha = interp1d(
+            np.transpose(BhS)[0],
+            ne * GeVsqcm2 * np.transpose(BhS)[1],
+            fill_value=0.0,
+            bounds_error=False,
+        )
+        """
 
         II_y_Brem = np.array(
             [
@@ -353,7 +459,7 @@ class Shower:
             ]
         )
         self._interaction_integral_Brem = interp1d(
-            np.transpose(BS)[0], II_y_Brem, fill_value=0.0, bounds_error=False
+            BS[:, 0], II_y_Brem, fill_value=0.0, bounds_error=False
         )
 
         II_y_PP = np.array(
@@ -363,7 +469,7 @@ class Shower:
             ]
         )
         self._interaction_integral_PP = interp1d(
-            np.transpose(PPS)[0], II_y_PP, fill_value=0.0, bounds_error=False
+            PPS[:, 0], II_y_PP, fill_value=0.0, bounds_error=False
         )
 
         II_y_Ann = np.array(
@@ -373,7 +479,7 @@ class Shower:
             ]
         )
         self._interaction_integral_Ann = interp1d(
-            np.transpose(AnnS)[0], II_y_Ann, fill_value=0.0, bounds_error=False
+            AnnS[:, 0], II_y_Ann, fill_value=0.0, bounds_error=False
         )
 
         II_y_Comp = np.array(
@@ -383,7 +489,7 @@ class Shower:
             ]
         )
         self._interaction_integral_Comp = interp1d(
-            np.transpose(CS)[0], II_y_Comp, fill_value=0.0, bounds_error=False
+            CS[:, 0], II_y_Comp, fill_value=0.0, bounds_error=False
         )
 
         II_y_Moller = np.array(
@@ -415,10 +521,42 @@ class Shower:
         self._interaction_integral_Bhabha = interp1d(
             bhabha_moller_energies, II_y_Bhabha, fill_value=0.0, bounds_error=False
         )
+        """
+        II_y_Moller = np.array(
+            [
+                quad(
+                    self._NSigmaMoller,
+                    MS[0][0],
+                    MS[i][0],
+                    full_output=1,
+                )[0]
+                for i in range(len(MS))
+            ]
+        )
+        self._interaction_integral_Moller = interp1d(
+            np.transpose(MS)[0], II_y_Moller, fill_value=0.0, bounds_error=False
+        )
+
+        II_y_Bhabha = np.array(
+            [
+                quad(
+                    self._NSigmaBhabha,
+                    BhS[0][0],
+                    BhS[i][0],
+                    full_output=1,
+                )[0]
+                for i in range(len(BhS))
+            ]
+        )
+        self._interaction_integral_Bhabha = interp1d(
+            np.transpose(BS)[0], II_y_Bhabha, fill_value=0.0, bounds_error=False
+        )
+        """
 
     def _positron_exponential_factor(self, E, Ei):
         """Returns the exponential factor for positron non-interaction probability
         over an energy interval [E, Ei]"""
+
         # this quantity has units of GeV/cm (assuming E, Ei given in GeV)
         n_sigma_diff = (
             (self._interaction_integral_Brem(Ei) - self._interaction_integral_Brem(E))
@@ -528,7 +666,7 @@ class Shower:
         sample_dict = sample_list[process][LU_Key][1]
 
         adaptive_map = sample_dict["adaptive_map"]
-        max_F = sample_dict["max_F"][self._target_material] * self._maxF_fudge_global
+        max_F = sample_dict["max_F"][self.target.name] * self._maxF_fudge_global
         neval_vegas = sample_dict["neval"]
         integrand = vg.Integrator(
             map=adaptive_map,
@@ -540,32 +678,36 @@ class Shower:
         event_info = {
             "E_inc": Einc,
             "m_e": m_electron,
-            "Z_T": self._ZTarget,
-            "A_T": self._ATarget,
-            "mT": self._ATarget,
+            "Z_T": self.target.Z,
+            "A_T": self.target.A,
+            "mT": self.target.A,  # NOTE: is this meant to be (mT * m_nucleon)?
             "alpha_FS": alpha_em,
             "mV": 0,
             "Eg_min": self._Egamma_min,
             "Ee_min": self._Ee_min,
+            "process": process,
         }
 
         if process in diff_xsection_options:
             diff_xsec_func = diff_xsection_options[process]
         else:
             raise Exception("Your process is not in the list")
-
+        batch_f = diff_xsec_func(
+            event_info, len(proc.integration_range(event_info, event_info["process"]))
+        )
         if VB:
             sampcount = 0
         n_integrators_used = 0
         sample_found = False
         while sample_found is False and n_integrators_used < self._max_n_integrators:
             n_integrators_used += 1
-            for x, wgt in integrand.random():
-                if VB:
-                    sampcount += 1
-                if max_F * draw_U() < wgt * diff_xsec_func(event_info, x):
-                    sample_found = True
-                    break
+            for x_batch, wgt_batch in integrand.random_batch():
+                for x, wgt in zip(x_batch, wgt_batch):
+                    if VB:
+                        sampcount += 1
+                    if max_F * draw_U() < wgt * batch_f(np.array([x])):
+                        sample_found = True
+                        break
         if sample_found is False:
             raise Exception("No Sample Found", process, Einc, LU_Key)
         if VB:
@@ -583,6 +725,17 @@ class Shower:
             ]
         ):
             return None
+
+        if E0 > self._maximum_calculable_energy[p0.get_ids()["PID"]]:
+            raise ValueError(
+                "Warning: Sampling above maximum energy for process"
+                + str(process)
+                + "for energy = "
+                + (E0)
+                + " GeV."
+                + f" Maximum calculable energy is {self._maximum_calculable_energy[p0.get_ids()['PID']]}"
+            )
+
         RM = p0.rotation_matrix()
         sample_event = self.draw_sample(E0, process=process, VB=VB)
 
@@ -668,9 +821,9 @@ class Shower:
                 if MS:
                     P0 = self._get_MCS_p(
                         Part0.get_p0(),
-                        self._rhoTarget * (dist / cmtom),
-                        self._ATarget,
-                        self._ZTarget,
+                        self.target.rho * (dist / cmtom),
+                        self.target.A,
+                        self.target.Z,
                         self._MCS_rescale_factor,
                     )
                     PHat = (p0 + P0[1:]) / np.linalg.norm(p0 + P0[1:])
@@ -714,9 +867,9 @@ class Shower:
                             Part0.set_pf(
                                 self._get_MCS_p(
                                     Part0.get_pf(),
-                                    self._rhoTarget * (delta_z / cmtom),
-                                    self._ATarget,
-                                    self._ZTarget,
+                                    self.target.rho * (delta_z / cmtom),
+                                    self.target.A,
+                                    self.target.Z,
                                     self._MCS_rescale_factor,
                                 )
                             )
@@ -745,9 +898,9 @@ class Shower:
                     Part0.set_pf(
                         self._get_MCS_p(
                             Part0.get_pf(),
-                            self._rhoTarget * (last_increment / cmtom),
-                            self._ATarget,
-                            self._ZTarget,
+                            self.target.rho * (last_increment / cmtom),
+                            self.target.A,
+                            self.target.Z,
                             self._MCS_rescale_factor,
                         )
                     )
@@ -801,7 +954,7 @@ class Shower:
                         if ap.get_ids()["PID"] == 22:
                             ap = self.propagate_particle(ap, MS=MS_g)
                         elif np.abs(ap.get_ids()["PID"]) == 11:
-                            dEdxT = self.get_material_properties()[3] * (
+                            dEdxT = self.target.dEdx * (
                                 0.1
                             )  # Converting MeV/cm to GeV/m
                             ap = self.propagate_particle(ap, MS=MS_e, Losses=dEdxT)

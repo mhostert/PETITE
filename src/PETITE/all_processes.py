@@ -7,9 +7,13 @@ from PETITE.physical_constants import m_electron, m_proton, GeV, alpha_em
 from PETITE.radiative_return import lepton_luminosity_integrand
 from PETITE.radiative_return import transformed_lepton_luminosity_integrand
 
-# import pyximport
-# pyximport.install(inplace=True)
-# from PETITE.xsec_integrands import c_dsigma_brem_dimensionless
+import pyximport
+
+pyximport.install(inplace=True)
+from PETITE.xsec_integrands import (
+    c_dsigma_brem_dimensionless,
+    c_dsigma_pairprod_dimensionless,
+)
 
 
 # --------------------------------------------------------------------------
@@ -170,66 +174,70 @@ class dsigma_brem_dimensionless:
 
     def __call__(self, phase_space_par_list):
 
-        # return c_dsigma_brem_dimensionless(
-        #     phase_space_par_list, self.event_info["E_inc"], self.event_info["Eg_min"]
+        return c_dsigma_brem_dimensionless(
+            phase_space_par_list,
+            self.event_info["E_inc"],
+            self.event_info["Eg_min"],
+            self.event_info["Z_T"],
+        )
+
+        # ep = self.event_info["E_inc"]
+        # Egamma_min = self.event_info["Eg_min"]
+        # # mV = 0  # NOTE: not needed?
+
+        # # if len(np.shape(phase_space_par_list)) == 1:
+        # #     phase_space_par_list = np.array([phase_space_par_list])
+
+        # x1, x2, x3, x4 = phase_space_par_list.T  # variables
+        # w, d, dp, ph = (
+        #     Egamma_min + x1 * (ep - m_electron - Egamma_min),
+        #     ep / (2 * m_electron) * (x2 + x3),
+        #     ep / (2 * m_electron) * (x2 - x3),
+        #     (x4 - 1 / 2) * 2 * np.pi,
         # )
 
-        ep = self.event_info["E_inc"]
-        Egamma_min = self.event_info["Eg_min"]
-        mV = 0  # NOTE: not needed?
+        # epp = ep - w
 
-        if len(np.shape(phase_space_par_list)) == 1:
-            phase_space_par_list = np.array([phase_space_par_list])
+        # allowed_kinematics = (
+        #     (Egamma_min < w)
+        #     & (w < ep - m_electron)
+        #     & (m_electron < epp)
+        #     & (epp < ep)
+        #     & (d > 0.0)
+        #     & (dp > 0.0)
+        # )
 
-        # for variables in phase_space_par_list:
-        x1, x2, x3, x4 = phase_space_par_list.T  # variables
-        w, d, dp, ph = (
-            Egamma_min + x1 * (ep - m_electron - Egamma_min),
-            ep / (2 * m_electron) * (x2 + x3),
-            ep / (2 * m_electron) * (x2 - x3),
-            (x4 - 1 / 2) * 2 * np.pi,
-        )
+        # qsq = m_electron**2 * (
+        #     (d**2 + dp**2 - 2 * d * dp * np.cos(ph))
+        #     + m_electron**2 * ((1 + d**2) / (2 * ep) - (1 + dp**2) / (2 * epp)) ** 2
+        # )
+        # PF = (
+        #     8.0
+        #     / np.pi
+        #     * alpha_em
+        #     * (alpha_em / m_electron) ** 2
+        #     * (epp * m_electron**4)
+        #     / (w * ep * qsq**2)
+        #     * d
+        #     * dp
+        # )
+        # jacobian_factor = np.pi * ep**2 * (ep - m_electron - Egamma_min) / m_electron**2
+        # FF = g2_elastic(self.event_info, qsq)
+        # T1 = d**2 / (1 + d**2) ** 2
+        # T2 = dp**2 / (1 + dp**2) ** 2
+        # T3 = w**2 / (2 * ep * epp) * (d**2 + dp**2) / ((1 + d**2) * (1 + dp**2))
+        # T4 = -(epp / ep + ep / epp) * (d * dp * np.cos(ph)) / ((1 + d**2) * (1 + dp**2))
+        # dSigs = np.where(
+        #     allowed_kinematics, PF * (T1 + T2 + T3 + T4) * jacobian_factor * FF, 0
+        # )
 
-        epp = ep - w
+        # if np.isnan(dSigs).sum() > 0:
+        #     print(dSigs, PF, T1, T2, T3, T4, qsq, jacobian_factor, FF)
+        #     print([x1, x2, x3, x4])
+        #     print([w, d, dp, ph])
+        #     # dSigs.append(dSig0) # NOTE: not needed?
 
-        allowed_kinematics = (
-            (Egamma_min < w)
-            & (w < ep - m_electron)
-            & (m_electron < epp)
-            & (epp < ep)
-            & (d > 0.0)
-            & (dp > 0.0)
-        )
-
-        qsq = m_electron**2 * (
-            (d**2 + dp**2 - 2 * d * dp * np.cos(ph))
-            + m_electron**2 * ((1 + d**2) / (2 * ep) - (1 + dp**2) / (2 * epp)) ** 2
-        )
-        PF = (
-            8.0
-            / np.pi
-            * alpha_em
-            * (alpha_em / m_electron) ** 2
-            * (epp * m_electron**4)
-            / (w * ep * qsq**2)
-            * d
-            * dp
-        )
-        jacobian_factor = np.pi * ep**2 * (ep - m_electron - Egamma_min) / m_electron**2
-        FF = g2_elastic(self.event_info, qsq)
-        T1 = d**2 / (1 + d**2) ** 2
-        T2 = dp**2 / (1 + dp**2) ** 2
-        T3 = w**2 / (2 * ep * epp) * (d**2 + dp**2) / ((1 + d**2) * (1 + dp**2))
-        T4 = -(epp / ep + ep / epp) * (d * dp * np.cos(ph)) / ((1 + d**2) * (1 + dp**2))
-        dSigs = allowed_kinematics * PF * (T1 + T2 + T3 + T4) * jacobian_factor * FF
-
-        if np.isnan(dSigs).sum() > 0:
-            print(dSigs, PF, T1, T2, T3, T4, qsq, jacobian_factor, FF)
-            print([x1, x2, x3, x4])
-            print([w, d, dp, ph])
-            # dSigs.append(dSig0) # NOTE: not needed?
-
-        return dSigs
+        # return dSigs
 
 
 class dsig_dx_dcostheta_dark_brem_exact_tree_level:
@@ -549,78 +557,85 @@ class dsigma_pairprod_dimensionless:
 
     def __call__(self, phase_space_par_list):
 
-        w = self.event_info["E_inc"]
-
-        x1, x2, x3, x4 = phase_space_par_list.T
-        epp, dp, dm, ph = (
-            m_electron + x1 * (w - 2 * m_electron),
-            w / (2 * m_electron) * (x2 + x3),
-            w / (2 * m_electron) * (x2 - x3),
-            x4 * 2 * np.pi,
+        return c_dsigma_pairprod_dimensionless(
+            phase_space_par_list, self.event_info["E_inc"], self.event_info["Z_T"]
         )
 
-        epm = w - epp
+        # w = self.event_info["E_inc"]
 
-        allowed_kinematics = (
-            (m_electron < epm)
-            & (epm < w)
-            & (m_electron < epp)
-            & (epp < w)
-            & (dm > 0.0)
-            & (dp > 0.0)
-        )
+        # x1, x2, x3, x4 = phase_space_par_list.T
+        # epp, dp, dm, ph = (
+        #     m_electron + x1 * (w - 2 * m_electron),
+        #     w / (2 * m_electron) * (x2 + x3),
+        #     w / (2 * m_electron) * (x2 - x3),
+        #     x4 * 2 * np.pi,
+        # )
 
-        qsq_over_m_electron_sq = (
-            dp**2 + dm**2 + 2.0 * dp * dm * np.cos(ph)
-        ) + m_electron**2 * (
-            (1.0 + dp**2) / (2.0 * epp) + (1.0 + dm**2) / (2.0 * epm)
-        ) ** 2
-        PF = (
-            8.0
-            / np.pi
-            * alpha_em
-            * (alpha_em / m_electron) ** 2
-            * epp
-            * epm
-            / (w**3 * qsq_over_m_electron_sq**2)
-            * dp
-            * dm
-        )
-        jacobian_factor = np.pi * w**2 * (w - 2 * m_electron) / m_electron**2
-        FF = g2_elastic(self.event_info, m_electron**2 * qsq_over_m_electron_sq)
+        # # Positron energy
+        # epm = w - epp
 
-        T1 = -1.0 * dp**2 / (1.0 + dp**2) ** 2
-        T2 = -1.0 * dm**2 / (1.0 + dm**2) ** 2
-        T3 = (
-            w**2 / (2.0 * epp * epm) * (dp**2 + dm**2) / ((1.0 + dp**2) * (1.0 + dm**2))
-        )
-        T4 = (
-            (epp / epm + epm / epp)
-            * (dp * dm * np.cos(ph))
-            / ((1.0 + dp**2) * (1.0 + dm**2))
-        )
+        # allowed_kinematics = (
+        #     (m_electron < epm)
+        #     & (m_electron < epp)
+        #     & (epm < w)
+        #     & (epp < w)
+        #     & (dm > 0.0)
+        #     & (dp > 0.0)
+        # )
 
-        dSigs = np.where(
-            allowed_kinematics, PF * (T1 + T2 + T3 + T4) * jacobian_factor * FF, 0
-        )
+        # qsq_over_m_electron_sq = (
+        #     dp**2 + dm**2 + 2.0 * dp * dm * np.cos(ph)
+        # ) + m_electron**2 * (
+        #     (1.0 + dp**2) / (2.0 * epp) + (1.0 + dm**2) / (2.0 * epm)
+        # ) ** 2
 
-        if np.isnan(dSigs).sum() > 0:
-            bad_entries = np.isnan(dSigs)
-            print(
-                [
-                    dSigs[bad_entries],
-                    PF[bad_entries],
-                    T1[bad_entries],
-                    T2[bad_entries],
-                    T3[bad_entries],
-                    T4[bad_entries],
-                    qsq_over_m_electron_sq[bad_entries],
-                    jacobian_factor[bad_entries],
-                    FF[bad_entries],
-                ]
-            )
+        # PF = (
+        #     8.0
+        #     / np.pi
+        #     * alpha_em
+        #     * (alpha_em / m_electron) ** 2
+        #     * epp
+        #     * epm
+        #     / (w**3 * qsq_over_m_electron_sq**2)
+        #     * dp
+        #     * dm
+        # )
 
-        return dSigs
+        # jacobian_factor = np.pi * w**2 * (w - 2 * m_electron) / m_electron**2
+        # FF = g2_elastic(self.event_info, m_electron**2 * qsq_over_m_electron_sq)
+
+        # T1 = -1.0 * dp**2 / (1.0 + dp**2) ** 2
+        # T2 = -1.0 * dm**2 / (1.0 + dm**2) ** 2
+        # T3 = (
+        #     w**2 / (2.0 * epp * epm) * (dp**2 + dm**2) / ((1.0 + dp**2) * (1.0 + dm**2))
+        # )
+        # T4 = (
+        #     (epp / epm + epm / epp)
+        #     * (dp * dm * np.cos(ph))
+        #     / ((1.0 + dp**2) * (1.0 + dm**2))
+        # )
+
+        # dSigs = np.where(
+        #     allowed_kinematics, PF * (T1 + T2 + T3 + T4) * jacobian_factor * FF, 0
+        # )
+
+        # if np.isnan(dSigs).sum() > 0:
+        #     bad_entries = np.isnan(dSigs)
+        #     print(
+        #         [
+        #             dSigs[bad_entries],
+        #             PF[bad_entries],
+        #             T1[bad_entries],
+        #             T2[bad_entries],
+        #             T3[bad_entries],
+        #             T4[bad_entries],
+        #             qsq_over_m_electron_sq[bad_entries],
+        #             jacobian_factor[bad_entries],
+        #             FF[bad_entries],
+        #         ]
+        #     )
+
+        # return dSigs
 
 
 @vg.lbatchintegrand
@@ -642,11 +657,7 @@ class dsigma_compton_dCT:
         Eg = self.event_info["E_inc"]
 
         s = m_electron**2 + 2 * Eg * m_electron
-        if s < (m_electron + self.mV) ** 2:
-            if len(np.shape(phase_space_par_list)) == 1:
-                return 0.0
-            else:
-                return np.zeros(shape=len(phase_space_par_list))
+        allowed_kinematics = s > (m_electron + self.mV) ** 2
 
         ct = phase_space_par_list[:, 0]
 
@@ -717,7 +728,7 @@ class dsigma_compton_dCT:
             ) / (m_electron**2 - s) ** 2
 
         # NOTE: AFAI can tell, there's no hardcoded kinematic condition here
-        dSigs = PF * jacobian * (T1 + T2 + T3)
+        dSigs = np.where(allowed_kinematics, PF * jacobian * (T1 + T2 + T3), 0)
 
         if np.isnan(dSigs).sum() > 0:
             bad_entries = np.isnan(dSigs)
@@ -945,7 +956,7 @@ def get_points(distribution, npts):
 # ------------------------------------------------------------------------------
 # Total Cross Sections and Sample Draws for Incident Electrons/Positrons/Photons
 # ------------------------------------------------------------------------------
-n_points = 10000  # Default number of points to draw for unweighted samples
+n_points = 10_000  # Default number of points to draw for unweighted samples
 
 diff_xsection_options = {
     "PairProd": dsigma_pairprod_dimensionless,

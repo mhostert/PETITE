@@ -3,13 +3,11 @@
 """
 
 import numpy as np
-import sys, os
+import os
 
-# path = os.getcwd()
-# path = os.path.join(path, "../PETITE")
-# sys.path.insert(0, path) #NOTE: This is not needed if PETITE is pip installed.
-from PETITE.all_processes import vegas_integration
-from PETITE.physical_constants import target_information, m_electron, alpha_em
+from scipy.interpolate import interp1d
+from scipy.integrate import quad
+
 from glob import glob
 
 from multiprocessing import Pool
@@ -17,6 +15,10 @@ import pickle
 from functools import partial
 import argparse
 import datetime
+
+from PETITE.all_processes import vegas_integration
+from PETITE.physical_constants import m_electron, alpha_em, GeVsqcm2
+from PETITE.targets import target_information, Target
 
 
 # helper function to turn float to string
@@ -94,12 +96,9 @@ def make_integrators(params, process, paralellize=True, overwrite=False):
     Generate vegas integrator pickles for a given process and set of parameters.
     Input:
         params: dictionary of parameters containing
-            mV : dark vector mass in GeV
-            A : target atomic mass number
-            Z : target atomic number
-            mT : target mass in GeV
         process: string of process name
         paralellize: boolean to run in parallel or not
+        overwrite: boolean to overwrite existing files or not
     """
     if "mV" not in params:
         mV = 0.0
@@ -232,7 +231,7 @@ def call_find_maxes(params, list_of_processes, verbose=False):
     else:
         find_maxes.main(find_maxes_params)
     # else:
-    #    print('Not running find_maxes')
+
     return
 
 
@@ -283,6 +282,79 @@ def organize_directories_final(dir):
     for directory in directories:
         os.system("mv " + directory + " " + dir + "/auxiliary/")
     return
+
+
+def create_xsec_interp(params):
+    """
+        Create interpolators for cross sections and inverse mean free paths for each process
+
+    Args:
+        params (dict): simulation parameters
+
+    """
+
+    # Interpolating functions for final xsec
+    final_xsec_dict_interp = {}  # xsec (cm^2)
+
+    # Interpolating functions for inverse mean free paths
+    inv_mfp_dict_interp = {}  # n_T * xsec (1/cm)
+
+    # Xsec Data files
+    try:
+        cross_section_file = open(params["save_location"] + "sm_xsec.pkl", "rb")
+    except FileNotFoundError:
+        print(
+            "sm_xsec.pkl not found -- have you run generate_integrators.py and find_max.py?"
+        )
+    cross_section_dict = pickle.load(cross_section_file)
+    cross_section_file.close()
+
+    for process, _proc_dict in cross_section_dict.items():
+
+        final_xsec_dict_interp[process] = {}
+        inv_mfp_dict_interp[process] = {}
+
+        for target, xsec_data in _proc_dict.items():
+
+            E, xsec = np.array(xsec_data).T
+
+            n_targets = Target(target).get_n_target_for_process(process)
+
+            final_xsec_dict_interp[process][target] = interp1d(
+                E,
+                n_targets * GeVsqcm2 * xsec,
+                fill_value=0.0,
+                bounds_error=False,
+            )
+
+            # Integral of inverse mean free path from E_min to E_max
+            inv_mfp = np.array(
+                [
+                    quad(
+                        final_xsec_dict_interp[process][target],
+                        E[0],
+                        E[i],
+                        full_output=1,
+                    )[0]
+                    for i in range(len(E))
+                ]
+            )
+            inv_mfp_dict_interp[process][target] = interp1d(
+                E, inv_mfp, fill_value=0.0, bounds_error=False
+            )
+
+        final_xsec_dict_interp[process]["Emin"] = E.min()
+        final_xsec_dict_interp[process]["Emax"] = E.max()
+
+        inv_mfp_dict_interp[process]["Emin"] = E.min()
+        inv_mfp_dict_interp[process]["Emax"] = E.max()
+
+    print("Saving xsec and inv mfp interpolators...")
+    with open(params["save_location"] + "/sm_xsec_interp.pkl", "wb") as f:
+        pickle.dump(final_xsec_dict_interp, f)
+    with open(params["save_location"] + "/sm_invmfp_interp.pkl", "wb") as f:
+        pickle.dump(inv_mfp_dict_interp, f)
+    print("Saved.")
 
 
 def main(args):
@@ -358,9 +430,10 @@ def main(args):
             )
 
         if args.run_find_maxes:
-            call_find_maxes(processing_params, process)
+            call_find_maxes(params=processing_params, list_of_processes=process)
         else:
             print("Not Running find_maxes")
+
     # move all directories in mother directory to auxiliary directory
     organize_directories_final(training_params["save_location"])
 
@@ -434,6 +507,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-run_find_maxes", type=bool, default=True, help="run Find_Maxes.py after done"
     )
+
     parser.add_argument("-verbosity", type=bool, default=False, help="verbosity mode")
     # stich integrators
     parser.add_argument(
