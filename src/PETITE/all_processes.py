@@ -956,7 +956,7 @@ def get_points(distribution, npts):
 # ------------------------------------------------------------------------------
 # Total Cross Sections and Sample Draws for Incident Electrons/Positrons/Photons
 # ------------------------------------------------------------------------------
-n_points = 10_000  # Default number of points to draw for unweighted samples
+n_points = 100_000  # Default number of points to draw for unweighted samples
 
 diff_xsection_options = {
     "PairProd": dsigma_pairprod_dimensionless,
